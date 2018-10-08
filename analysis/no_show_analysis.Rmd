@@ -3,8 +3,312 @@ title: "no_show_hair_saloon"
 output: html_document
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+Data Description
+
+The main task is to predict the bookings most likely to end up with a no-show. Here we posess the information about the client's previous bookings, cancelations and no-shows as well as service and cost information. 
+
+**book_tod** The booking time of day.
+**book_dow** The booking day-of-week.
+**book_category** The booked service category (COLOR or STYLE)
+**book_staff** The staff member to provide the service.
+
+**last_day_services** The number of services provided to the client on their last visit before the current booking or today whichever is greater.
+**last_receipt_tot** The amount paid by the client on their last visit before the current booking or today whichever is greater.
+
+**last_noshow** Did the client no-show on their last booking before the current booking or today whichever is greater? (0 - no, 1 - yes)
+last_prod_flagDid the client buy a retail product on their last booking before the current booking or today whichever is greater? (0 - no, 1 - yes)
+last_cumrevThe client's cumulative service revenue as of their last booking before the current booking or today whichever is greater.
+last_cumbookThe client's cumulative number of bookings as of their last booking before the current booking or today whichever is greater.
+last_cumstyleThe client's cumulative number of STYLE bookings as of their last booking before the current booking or today whichever is greater.
+last_cumcolorThe client's cumulative number of COLOR bookings as of their last booking before the current booking or today whichever is greater.
+last_cumprodThe client's cumulative number of bookings with retail product purchases as of their last booking before the current booking or today whichever is greater.
+last_cumcancelThe client's cumulative number of appointment cancellations as of their last booking before the current booking or today whichever is greater.
+last_cumnoshowThe client's cumulative number of no-shows as of their last booking before the current booking or today whichever is greater.
+noshowDid the client no-show or execute an out-of-policy cancellation for this booking? (0 - no, 1 - yes)
+recencyThe number of days since the client's last booking before the current booking or today whichever is greater.
+
+На этой неделе отчет должен содержать:
+описание данных, решаемой задачи
+формулировку конкретных вопросов и проверку соответствующих гипотез
+модель на основе дерева решений
+модель на основе регрессии (с учетом регуляризации)
+
 ```{r}
 library(readr)
-full_df <- read_csv("data/hair_salon_no_show_wrangled_df.csv")
+library(dplyr)
+
+full_df <- read_csv("~/Documents/repositories/no_show/data/hair_salon_no_show_wrangled_df.csv")
+summary(full_df)
+full_df$noshow <- as.factor(full_df$noshow)
+full_df$book_category <- as.factor(full_df$book_category)
+full_df$book_staff <- as.factor(full_df$book_staff)
+full_df$last_staff <- as.factor(full_df$last_staff)
+full_df$last_category <- as.factor(full_df$last_category)
+full_df$book_dow <- as.factor(full_df$book_dow)
+full_df$book_tod <- as.factor(full_df$book_tod)
+
+full_df = dplyr::select(full_df, - last_dow, -last_tod, -X1)
+
+full_df$book_tod <- ifelse(is.na(full_df$book_tod), "unknown", as.character(full_df$book_tod))
 ```
+
+
+Let's add some features
+
+```{r}
+# Does the staff match from the previous visist?
+full_df$staff_match = ifelse(full_df$book_staff == full_df$last_staff, 1, 0)
+full_df$staff_match = ifelse(is.na(full_df$staff_match), 0, full_df$staff_match)
+# Does the category match from the previous visit?
+full_df$category_match = ifelse(full_df$book_category == full_df$last_category, 1, 0)
+full_df$category_match = ifelse(is.na(full_df$category_match), 0, full_df$category_match)
+
+full_df <- select(full_df, - last_category, -last_staff)
+```
+
+We can plot some features
+
+Who gets more noshows among the staff?
+
+```{r}
+library(ggplot2)
+
+ggplot(full_df) +
+  geom_bar(aes(x = book_staff, fill = noshow), position = "dodge") + xlab("Staff")
+```
+It seems that Becky has a higher proportion of noshows.
+
+May the total price of the previous receipt (if any) influence the tendency to skip an appoitment?
+
+
+```{r}
+ggplot(full_df) +
+  geom_boxplot(aes(x = noshow, y = log(last_receipt_tot), fill = noshow)) +
+  ylab("log of previous receipt total")
+# zeros removed from the plot
+```
+
+According to the plot, there's no significant difference.
+
+What weekdays and time of the day do account for most of the noshows?
+
+```{r}
+days_times = full_df %>% group_by(book_dow, book_tod) %>% summarise(count_noshows = sum(as.numeric(noshow))) %>% arrange(desc(count_noshows))
+
+days_times$day_time = paste(days_times$book_dow, days_times$book_tod, sep = " ")
+
+ggplot(days_times) +
+  geom_bar(aes(x = reorder(day_time, count_noshows), y = count_noshows), stat = "identity") +
+  coord_flip() +
+  ylab("Week day and time") +
+  xlab("Count of noshows")
+
+
+```
+
+Saturday, Thursday, Friday afternoons and Saturday morning appointments tend to be skipped. There was only one noshow on Monday (maybe there's not much Monday appointments at all?). 
+
+## Hypothesis №1
+
+The noshows are spread uniformly accros the weekdays and daytime.
+
+```{r}
+tab = t(xtabs(count_noshows ~ book_dow + book_tod, data = days_times))
+chisq.test(tab)
+
+require(vcd)
+mosaic(tab, shade=T, legend=T)
+```
+
+The chi-squared shows the significant difference (p-value < 2.22e-16). Tuesday evenings and Saturday mornings get disproportionally more noshows. Saturday evenings and Tuesday afternoons get much less noshows.
+
+Let's remove the only one observation on Monday
+
+```{r}
+full_df = filter(full_df, book_dow != "Monday")
+```
+
+## Hypothesis №2 
+
+The noshows are spread uniformly across those clients who sets apponintments with the master they'd been working before and those who chooses a new one.
+
+```{r}
+tab1 <- full_df %>% group_by(staff_match, noshow) %>% summarise(count = sum(as.numeric(noshow)))
+
+tab1 = xtabs(count ~ staff_match + noshow, tab1)
+chisq.test(tab1)
+mosaic(tab1, shade=T, legend=T)
+```
+
+The chi-squared is significant (p-value < 1.1615e-05). There is a significant difference. Those who sets an appointment with the previous master don't show more often.
+
+
+## Trees
+
+Let's make test and train again. 80% goes to train, 20% to test.
+
+```{r}
+library(caret)
+set.seed(483)
+
+full_df <- na.omit(full_df)
+
+trainIndex <- createDataPartition(full_df$noshow, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+noshowTrain <- full_df[ trainIndex,]
+noshowTest  <- full_df[-trainIndex,]
+```
+
+Here we'll use 6 folds for cross-validation.
+
+```{r}
+cv5 <- trainControl(method="cv", number = 5)
+set.seed(483)
+tree_model <- caret::train(noshow~., method = 'ctree', data = noshowTrain, trControl=cv5)
+plot(tree_model$finalModel, type="simple")
+```
+
+The main partition goes by the variable `book_tod`. If the time of the appointment is `unknown`,  
+
+```{r}
+predictions.on.train <- predict(tree_model, noshowTrain)
+confusionMatrix(predictions.on.train, noshowTrain$noshow, positive = "1", mode = "prec_recall")
+```
+
+```{r}
+predictions.on.test <- predict(tree_model, noshowTest)
+confusionMatrix(predictions.on.test, noshowTest$noshow, positive = "1", mode = "prec_recall")
+```
+
+
+```{r}
+set.seed(555)
+cv5 <- trainControl(method="cv", number = 5)
+cv5_down<-cv5
+cv5_down$sampling<-"down"
+
+tree_model_down <- caret::train(noshow~., method = 'ctree', data = noshowTrain, trControl=cv5_down)
+plot(tree_model_down$finalModel, type="simple")
+```
+
+```{r}
+d.on.train <- predict(tree_model_down, noshowTrain)
+confusionMatrix(d.on.train, noshowTrain$noshow, positive = "1", mode = "prec_recall")
+```
+
+```{r}
+d.on.test <- predict(tree_model_down, noshowTest)
+confusionMatrix(d.on.test, noshowTest$noshow, positive = "1", mode = "prec_recall")
+aucTrees <- predict(tree_model_down, noshowTest)
+```
+
+## Linear Regression models with regularization
+
+
+```{r}
+library(caret)
+set.seed(483)
+
+full_df <- na.omit(full_df)
+full_df$book_tod <- as.factor(full_df$book_tod)
+
+trainIndex <- createDataPartition(full_df$noshow, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+noshowTrain <- full_df[ trainIndex,]
+noshowTest  <- full_df[-trainIndex,]
+
+lmodel <- glm(noshow~., data = noshowTrain, family = binomial(link = "logit"))
+summary(lmodel)
+
+pred = predict(lmodel, newdata = noshowTest, type = "response")
+```
+
+
+```{r}
+library(pROC)
+ROC = roc(response = noshowTest$noshow, predictor = pred)
+aucSimple = pROC::auc(ROC)
+
+ggplot() + geom_path(aes(y=ROC$sensitivities, x=1-ROC$specificities))+
+  xlab("FPR") + ylab("TPR")
+```
+### Regularization
+
+```{r}
+library(glmnet)
+
+X.train <- model.matrix(noshow~.-noshow, data=noshowTrain)
+X.test <- model.matrix(noshow~.-noshow, data=noshowTest)
+
+glmnet.fit<-glmnet(X.train, noshowTrain$noshow, family = "binomial")
+
+glmnet.predictions <- predict(glmnet.fit, X.test, type = "response")
+
+glmnet.fit$lambda
+```
+```{r}
+plot(glmnet.fit,xvar="lambda")
+```
+
+
+```{r}
+ggplot()+
+  geom_point(aes(x=log(glmnet.fit$lambda), y=glmnet.fit$dev.ratio, color = glmnet.fit$df)) +
+  xlab("Log Lambda") +
+  ylab("Explained variance")
+```
+
+```{r}
+cv.glmnet.fit<-cv.glmnet(X.train, noshowTrain$noshow, family = "binomial")
+best.lambda <- cv.glmnet.fit$lambda.min
+best.lambda
+```
+
+
+```{r}
+glmnet.fit.best<-glmnet(X.train, noshowTrain$noshow, family = "binomial", lambda = best.lambda)
+coef(glmnet.fit.best)
+glmnet.predictions.best <- predict(glmnet.fit.best, X.test, type = "response")
+
+ROC_lasso = roc(response = noshowTest$noshow, predictor = glmnet.predictions.best)
+aucLasso = pROC::auc(ROC_lasso)
+
+ggplot() + geom_path(aes(y=ROC$sensitivities, x=1-ROC$specificities), color = "black")+
+  geom_path(aes(y=ROC_lasso$sensitivities, x=1-ROC_lasso$specificities), color = "green") +
+  xlab("FPR") + ylab("TPR")
+```
+
+```{r}
+ridge <-cv.glmnet(X.train, noshowTrain$noshow, family = "binomial", alpha = 0)
+elastic<-cv.glmnet(X.train, noshowTrain$noshow, family = "binomial", alpha = 0.5)
+
+glmnet.predictions.ridge <- predict(ridge, X.test, type = "response")
+glmnet.predictions.elastic <- predict(elastic, X.test, type = "response")
+
+ROC_ridge = roc(response = noshowTest$noshow, predictor = glmnet.predictions.ridge)
+aucRidge = pROC::auc(ROC_ridge)
+ROC_elastic = roc(response = noshowTest$noshow, predictor = glmnet.predictions.elastic)
+aucElastic = pROC::auc(ROC_elastic)
+
+ggplot() + geom_path(aes(y=ROC$sensitivities, x=1-ROC$specificities), color = "black")+
+  geom_path(aes(y=ROC_lasso$sensitivities, x=1-ROC_lasso$specificities), color = "green") +
+  geom_path(aes(y=ROC_ridge$sensitivities, x=1-ROC_ridge$specificities), color = "blue") +
+  geom_path(aes(y=ROC_elastic$sensitivities, x=1-ROC_elastic$specificities), color = "pink") +
+  xlab("FPR") + ylab("TPR")
+```
+
+
+|Метод      |AUC-ROC                 |
+|-----------|------------------------|
+|LM         |`r aucSimple`           |
+|LASSO      |`r aucLasso`            |
+|Ridge      |`r aucRidge`            |
+|Elastic 0.5|`r aucElastic`          |
+|Trees      |`r aucElastic`          |
 
