@@ -1,0 +1,10 @@
+---
+title: "no_show_hair_saloon"
+output: html_document
+---
+
+```{r}
+library(readr)
+full_df <- read_csv("data/hair_salon_no_show_wrangled_df.csv")
+```
+
