@@ -1,5 +1,6 @@
 ---
-title: "no_show_hair_saloon"
+title: "Noshow prediction in hair saloon"
+author: Anna Golovchenko
 output: html_document
 ---
 
@@ -12,37 +13,44 @@ Data Description
 The main task is to predict the bookings most likely to end up with a no-show. Here we posess the information about the client's previous bookings, cancelations and no-shows as well as service and cost information. 
 
 **book_tod** The booking time of day.
+
 **book_dow** The booking day-of-week.
+
 **book_category** The booked service category (COLOR or STYLE)
+
 **book_staff** The staff member to provide the service.
 
 **last_day_services** The number of services provided to the client on their last visit before the current booking or today whichever is greater.
+
 **last_receipt_tot** The amount paid by the client on their last visit before the current booking or today whichever is greater.
 
 **last_noshow** Did the client no-show on their last booking before the current booking or today whichever is greater? (0 - no, 1 - yes)
-last_prod_flagDid the client buy a retail product on their last booking before the current booking or today whichever is greater? (0 - no, 1 - yes)
-last_cumrevThe client's cumulative service revenue as of their last booking before the current booking or today whichever is greater.
-last_cumbookThe client's cumulative number of bookings as of their last booking before the current booking or today whichever is greater.
-last_cumstyleThe client's cumulative number of STYLE bookings as of their last booking before the current booking or today whichever is greater.
-last_cumcolorThe client's cumulative number of COLOR bookings as of their last booking before the current booking or today whichever is greater.
-last_cumprodThe client's cumulative number of bookings with retail product purchases as of their last booking before the current booking or today whichever is greater.
-last_cumcancelThe client's cumulative number of appointment cancellations as of their last booking before the current booking or today whichever is greater.
-last_cumnoshowThe client's cumulative number of no-shows as of their last booking before the current booking or today whichever is greater.
-noshowDid the client no-show or execute an out-of-policy cancellation for this booking? (0 - no, 1 - yes)
-recencyThe number of days since the client's last booking before the current booking or today whichever is greater.
 
-На этой неделе отчет должен содержать:
-описание данных, решаемой задачи
-формулировку конкретных вопросов и проверку соответствующих гипотез
-модель на основе дерева решений
-модель на основе регрессии (с учетом регуляризации)
+**last_prod_flag** Did the client buy a retail product on their last booking before the current booking or today whichever is greater? (0 - no, 1 - yes)
+
+**last_cumrev** The client's cumulative service revenue as of their last booking before the current booking or today whichever is greater.
+
+**last_cumbook** The client's cumulative number of bookings as of their last booking before the current booking or today whichever is greater.
+
+**last_cumstyle** The client's cumulative number of STYLE bookings as of their last booking before the current booking or today whichever is greater.
+
+**last_cumcolor** The client's cumulative number of COLOR bookings as of their last booking before the current booking or today whichever is greater.
+
+**last_cumprod** The client's cumulative number of bookings with retail product purchases as of their last booking before the current booking or today whichever is greater.
+
+**last_cumcancel** The client's cumulative number of appointment cancellations as of their last booking before the current booking or today whichever is greater.
+
+**last_cumnoshow** The client's cumulative number of no-shows as of their last booking before the current booking or today whichever is greater.
+
+**noshow** Did the client no-show or execute an out-of-policy cancellation for this booking? (0 - no, 1 - yes)
+recencyThe number of days since the client's last booking before the current booking or today whichever is greater.
 
 ```{r}
 library(readr)
 library(dplyr)
 
 full_df <- read_csv("~/Documents/repositories/no_show/data/hair_salon_no_show_wrangled_df.csv")
-summary(full_df)
+
 full_df$noshow <- as.factor(full_df$noshow)
 full_df$book_category <- as.factor(full_df$book_category)
 full_df$book_staff <- as.factor(full_df$book_staff)
@@ -57,7 +65,7 @@ full_df$book_tod <- ifelse(is.na(full_df$book_tod), "unknown", as.character(full
 ```
 
 
-Let's add some features
+### Let's add some features
 
 ```{r}
 # Does the staff match from the previous visist?
@@ -72,7 +80,7 @@ full_df <- select(full_df, - last_category, -last_staff)
 
 We can plot some features
 
-Who gets more noshows among the staff?
+## Who gets more noshows among the staff?
 
 ```{r}
 library(ggplot2)
@@ -80,9 +88,10 @@ library(ggplot2)
 ggplot(full_df) +
   geom_bar(aes(x = book_staff, fill = noshow), position = "dodge") + xlab("Staff")
 ```
-It seems that Becky has a higher proportion of noshows.
 
-May the total price of the previous receipt (if any) influence the tendency to skip an appoitment?
+**It seems that Becky has a higher proportion of noshows.**
+
+## May the total price of the previous receipt (if any) influence the tendency to skip an appoitment?
 
 
 ```{r}
@@ -92,9 +101,9 @@ ggplot(full_df) +
 # zeros removed from the plot
 ```
 
-According to the plot, there's no significant difference.
+**According to the plot, there's no significant difference.**
 
-What weekdays and time of the day do account for most of the noshows?
+## What weekdays and time of the day do account for most of the noshows?
 
 ```{r}
 days_times = full_df %>% group_by(book_dow, book_tod) %>% summarise(count_noshows = sum(as.numeric(noshow))) %>% arrange(desc(count_noshows))
@@ -126,7 +135,7 @@ mosaic(tab, shade=T, legend=T)
 
 The chi-squared shows the significant difference (p-value < 2.22e-16). Tuesday evenings and Saturday mornings get disproportionally more noshows. Saturday evenings and Tuesday afternoons get much less noshows.
 
-Let's remove the only one observation on Monday
+Let's remove the only one observation on Monday.
 
 ```{r}
 full_df = filter(full_df, book_dow != "Monday")
@@ -167,11 +176,15 @@ noshowTest  <- full_df[-trainIndex,]
 Here we'll use 6 folds for cross-validation.
 
 ```{r}
-cv5 <- trainControl(method="cv", number = 5)
+cv7 <- trainControl(method="cv", number = 7)
 set.seed(483)
-tree_model <- caret::train(noshow~., method = 'ctree', data = noshowTrain, trControl=cv5)
-plot(tree_model$finalModel, type="simple")
+tree_model <- caret::train(noshow~., method = 'ctree', data = noshowTrain, trControl=cv7)
+plot(tree_model$finalModel, type="simple") # use link below if the image is too messy
 ```
+
+![][https://pp.userapi.com/c851424/v851424129/1cd9b/grNFQLEDal4.jpg]
+
+
 
 The main partition goes by the variable `book_tod`. If the time of the appointment is `unknown`,  
 
@@ -180,11 +193,14 @@ predictions.on.train <- predict(tree_model, noshowTrain)
 confusionMatrix(predictions.on.train, noshowTrain$noshow, positive = "1", mode = "prec_recall")
 ```
 
+The precision is 0.726 on the train sample, whoever on the test sample it is only 0.54. 
+
 ```{r}
 predictions.on.test <- predict(tree_model, noshowTest)
 confusionMatrix(predictions.on.test, noshowTest$noshow, positive = "1", mode = "prec_recall")
 ```
 
+## Let's try to deal with the imbalance
 
 ```{r}
 set.seed(555)
@@ -196,18 +212,21 @@ tree_model_down <- caret::train(noshow~., method = 'ctree', data = noshowTrain, 
 plot(tree_model_down$finalModel, type="simple")
 ```
 
+The `book_tod_unknown` remains to be the main split but the tree is less complicated.  
+
 ```{r}
 d.on.train <- predict(tree_model_down, noshowTrain)
 confusionMatrix(d.on.train, noshowTrain$noshow, positive = "1", mode = "prec_recall")
 ```
 
+The precision significantly decreased both on the train and the test samples. However the model seems to be less overfitted. 
+
 ```{r}
 d.on.test <- predict(tree_model_down, noshowTest)
 confusionMatrix(d.on.test, noshowTest$noshow, positive = "1", mode = "prec_recall")
-aucTrees <- predict(tree_model_down, noshowTest)
 ```
 
-## Linear Regression models with regularization
+## Linear Regression models with and without regularization
 
 
 ```{r}
@@ -238,6 +257,8 @@ aucSimple = pROC::auc(ROC)
 ggplot() + geom_path(aes(y=ROC$sensitivities, x=1-ROC$specificities))+
   xlab("FPR") + ylab("TPR")
 ```
+
+
 ### Regularization
 
 ```{r}
@@ -250,11 +271,11 @@ glmnet.fit<-glmnet(X.train, noshowTrain$noshow, family = "binomial")
 
 glmnet.predictions <- predict(glmnet.fit, X.test, type = "response")
 
-glmnet.fit$lambda
-```
-```{r}
 plot(glmnet.fit,xvar="lambda")
 ```
+
+
+
 
 
 ```{r}
@@ -310,5 +331,6 @@ ggplot() + geom_path(aes(y=ROC$sensitivities, x=1-ROC$specificities), color = "b
 |LASSO      |`r aucLasso`            |
 |Ridge      |`r aucRidge`            |
 |Elastic 0.5|`r aucElastic`          |
-|Trees      |`r aucElastic`          |
 
+
+**Conclusion:** the best linear model (LASSO) achieves almost 0.8 AUC-ROC 
